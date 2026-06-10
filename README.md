@@ -1,106 +1,202 @@
-# DB Report v2.9 — version Bash
+# DB Report v2.9
 
-Version Bash + sqlplus de DB Report v2.9 (il existe aussi une implémentation Python). Produit
-exactement le même rapport HTML modernisé, sans aucune dépendance hors de
-`bash`, `sqlplus` et les outils Unix standards.
+Générateur de rapport d'audit pour bases de données **Oracle**. Collecte côté
+client en **Bash + sqlplus** (zéro dépendance), produit un **rapport HTML
+moderne** auto-suffisant, et permet une génération **Word (.docx)** optionnelle
+côté serveur.
 
-## Quand utiliser cette version vs la Python
+Inspiré du projet open-source [`Yacine31/db_report`](https://github.com/Yacine31/db_report),
+réécrit avec une couverture d'audit étendue (40 sections), des verdicts
+automatiques, et une sortie HTML repensée.
 
-| Tu veux… | Choisis |
-|---|---|
-| Un rapport HTML moderne, c'est tout | **Bash** (cette version) |
-| Ingérer les résultats dans DB Report ou un autre outil (JSON) | Python |
-| Aucune installation possible sur le serveur DBA | **Bash** |
-| Tu maintiens un parc de bases hétérogènes et tu veux du code lisible par tous les DBA | **Bash** |
-| Tu veux ajouter des règles de diagnostic complexes (corrélations entre sections, scoring) | Python |
+---
 
-Les deux versions utilisent les **mêmes 7 requêtes SQL** (à la virgule près) et
-le **même CSS/JS embarqués** dans la sortie. Le rapport généré est identique
-visuellement.
+## Points clés
+
+- **40 requêtes d'audit** couvrant identité, mémoire, stockage, sauvegarde,
+  sécurité, sessions, maintenance, diagnostic profond et réplication.
+- **Verdicts automatiques** sur 4 niveaux (`OK` / `NOTICE` / `WARNING` /
+  `CRITICAL`) calculés à partir de seuils DBA standard, colorés dans le rapport.
+- **Zéro dépendance côté client** : seulement `bash`, `sqlplus` et les outils
+  Unix de base. Aucun `pip`, `apt` ou `yum`.
+- **Rapport HTML moderne** : sommaire latéral, recherche, sélecteur de thème,
+  multi-bases en onglets, et **copie de section vers Word** (avec transposition
+  automatique des tableaux larges pour rester lisibles).
+- **Pipeline Word optionnel** (côté serveur, via `python-docx`) à partir d'un
+  JSON de collecte.
+
+---
 
 ## Prérequis
 
-- Bash 4+ (toutes distros Linux récentes)
-- Oracle Database avec `sqlplus` dans le PATH
-- Connexion SYSDBA possible localement (`/ as sysdba`)
-- `pgrep` (dans `procps-ng`, présent par défaut)
+**Côté client (collecte) :**
+- Bash 4+ (toutes distributions Linux récentes)
+- Oracle Database avec `sqlplus` dans le `PATH`
+- Connexion SYSDBA locale possible (`/ as sysdba`)
+- `pgrep` (paquet `procps-ng`, présent par défaut)
 
-Aucun `pip`, aucun `apt`, aucun `yum`. C'est le point.
+**Côté serveur (génération Word, optionnel) :**
+- Python 3.10+
+- `pip install python-docx`
+
+---
 
 ## Installation
 
 ```bash
-git clone <ce-repo>
-cd db-report-v2.9
-chmod +x oracle_db_report.sh
+git clone https://github.com/Jousiam/db-report.git
+cd db-report
+chmod +x oracle_db_report.sh generate_word.sh
 ```
+
+---
 
 ## Usage
 
+### Rapport HTML
+
 ```bash
-# Détecte les bases sur l'hôte et produit un rapport par instance
+# Détecte toutes les bases de l'hôte et produit un rapport combiné
 ./oracle_db_report.sh
 
-# Cible une SID précise
+# Cibler une instance précise
 ./oracle_db_report.sh --sid PROD
 
-# Change le dossier de sortie
+# Changer le dossier de sortie
 ./oracle_db_report.sh --output-dir /var/audit/output
+
+# Options utiles
+./oracle_db_report.sh --query-timeout 180   # timeout par requête (défaut 120s)
+./oracle_db_report.sh --verbose             # logs détaillés
 ```
 
-Le rapport sort dans `output/YYYYMMDD/Rapport_<sid>_<timestamp>.html`.
+Sortie : `output/AAAAMMJJ/Rapport_<hôte>_<sid|multi-Ndb>_<horodatage>.html`.
 
-## Structure
+En présence de plusieurs instances, un seul HTML est produit avec un sélecteur
+d'onglets par base et une section « Configuration système » partagée.
+
+### Rapport Word (optionnel)
+
+À lancer côté serveur, à partir d'un rapport HTML déjà produit :
+
+```bash
+./generate_word.sh rapport.html rapport.docx --client ACME --logo logo.png
+```
+
+Voir [`docs/WORD_PIPELINE.md`](docs/WORD_PIPELINE.md) pour le détail et
+l'enrichissement (synthèse, notes DBA, diffusion).
+
+---
+
+## Les 40 sections d'audit
+
+| Catégorie | Sections |
+|-----------|----------|
+| **Identité & configuration** | 01 système, 02 taille base, 03 statut instance, 04 mode de la base, 05 paramètres init, 06 NLS, 07 DBA_REGISTRY, 08 resource limits |
+| **Diagnostics mémoire** | 09 cohérence SGA+PGA vs RAM, 10 PGA advisor, 11 shared pool (3 angles), 12 buffer cache (knee), 13 historique resize |
+| **Stockage** | 14 tablespaces, 15 datafiles, 16 redo logs, 17 bascules redo |
+| **Recovery / Backup** | 18 FRA, 19 config RMAN, 20 backups RMAN |
+| **Sécurité / Schémas** | 21 SYSAUX occupants, 22 utilisateurs, 23 profiles, 24 taille objets par schéma |
+| **Sessions & activité** | 25 sessions actives, 26 cursors usage |
+| **Maintenance** | 27 auto-tasks, 28 jobs en échec, 29 objets invalides, 30 feature usage (licences) |
+| **Diagnostic profond** | 31 erreurs alert log, 32 top wait events, 33 chaînes de blocage, 34 destinations d'archivage, 35 sessions longues, 36 top SQL, 37 index UNUSABLE |
+| **Réplication / HA** | 38 synthèse réplication, 39 Data Guard apply lag, 40 Data Guard archive gap |
+
+La synthèse réplication (38) détecte automatiquement Data Guard, Dbvisit,
+GoldenGate et Streams, et indique pour chacun `NOT_CONFIGURED` / `ACTIVE` /
+`DEGRADED` / `ERROR`.
+
+---
+
+## Philosophie des verdicts
+
+Chaque section comparant des valeurs à des seuils DBA standard produit une
+colonne `VERDICT` :
+
+| Niveau | Sens |
+|--------|------|
+| `OK` | valeur dans les normes |
+| `NOTICE` | observation à connaître, pas d'action requise |
+| `WARNING` | situation à surveiller, action recommandée |
+| `CRITICAL` | action urgente, risque de panne ou de perte de données |
+
+Les verdicts sont des **opinions outillées** : un point de départ pour le DBA,
+pas une vérité absolue. Le contexte (PROD vs DEV, charge réelle, ressources
+disponibles) reste toujours décisif.
+
+---
+
+## Structure du projet
 
 ```
-db-report-v2.9/
-├── oracle_db_report.sh         # Orchestrateur (équivalent de la version d'origine mais propre)
+db-report/
+├── oracle_db_report.sh         # Orchestrateur (collecte + génération HTML)
+├── generate_word.sh            # Wrapper de génération Word
 ├── lib/
 │   ├── utils.sh                # Logging, html_escape, slugify
-│   ├── detect.sh               # pgrep + fallback /etc/oratab
-│   └── render.sh               # Wrappers HTML pour les sections
+│   ├── detect.sh               # Détection des SID (pgrep + fallback /etc/oratab)
+│   └── render.sh               # Assemblage HTML des sections
 ├── sql/
-│   ├── header.sql              # SET MARKUP HTML ON + autres directives sqlplus
-│   └── database/               # Les 7 requêtes améliorées (mêmes que Python)
-│       ├── 01_system_info.sql
-│       ├── 02_memory_coherence.sql    [NOUVEAU vs version d'origine]
-│       ├── 03_pga_advice.sql          [NOUVEAU]
-│       ├── 04_shared_pool_health.sql  [NOUVEAU]
-│       ├── 05_buffer_cache_advice.sql [NOUVEAU]
-│       ├── 06_alert_log_errors.sql    [AMÉLIORÉ]
-│       └── 07_top_wait_events.sql     [NOUVEAU]
-└── templates/
-    ├── style.css               # Le CSS moderne (theme picker compris)
-    └── script.js               # Le JS (copy buttons, search, theme, etc.)
+│   ├── header.sql              # Directives sqlplus (SET MARKUP HTML ON, etc.)
+│   └── database/               # Les 40 requêtes d'audit (01-40)
+├── python/
+│   ├── html_to_json.py         # Bridge HTML -> JSON de collecte
+│   └── word_builder.py         # Génération .docx (python-docx)
+├── templates/
+│   ├── style.css               # CSS du rapport HTML
+│   └── script.js               # JS (copie Word, recherche, thème, verdicts)
+└── docs/
+    ├── COLLECT_SCHEMA.md       # Schéma JSON de collecte
+    ├── IMPROVEMENTS.md         # Détail des améliorations / verdicts
+    ├── MIGRATION.md            # Porter d'autres requêtes depuis le projet d'origine
+    └── WORD_PIPELINE.md        # Pipeline de génération Word
 ```
 
-## Différences techniques avec la version d'origine `Yacine31/db_report`
+---
 
-1. **`set -euo pipefail` ciblé** : on l'active globalement mais on relâche
-   localement autour de chaque `sqlplus` pour qu'une requête en erreur
-   n'arrête pas tout le rapport.
-2. **Détection via `pgrep`** (avec fallback `/etc/oratab`) plutôt que
-   `ps -eaf | grep pmon | egrep -v 'grep|ASM|APX1' | cut -d _ -f3`.
-3. **HTML semantique** : la version d'origine concatène des chaînes ; ici chaque
-   section est un vrai `<section>` avec un id, un titre, et le contenu
-   sqlplus encapsulé.
-4. **Format de date ISO 8601** dans toutes les requêtes (la version d'origine a un
-   `DD-MM-YYYY HH-MI-SS` ambigu, voir `docs/IMPROVEMENTS.md`).
-5. **Sortie HTML moderne** : sommaire latéral, copie de section vers Word,
-   theme picker, filtre de recherche, bouton retour en haut. Le d'origine
-   produit du HTML 2010 strict avec `<tr:hover>`.
+## Résilience & robustesse
 
-## Pour porter les autres requêtes de la version d'origine
+- **`timeout` par requête** (défaut 120 s, surchargeable via `-- TIMEOUT: N` en
+  tête d'un fichier SQL) : une requête qui gèle n'arrête pas tout le rapport.
+- **`NLS_LANG=AMERICAN_AMERICA.AL32UTF8`** forcé pour préserver les accents.
+- **Détecteur d'erreur intelligent** : si une requête renvoie à la fois une
+  erreur ORA non bloquante *et* une table, la table est affichée avec un
+  avertissement plutôt que masquée.
+- **Détection CDB** : passage automatique sur `CDB$ROOT` si la base est un CDB.
+- **En-têtes de colonnes protégés** contre la troncature sqlplus, cellules
+  nettoyées des espaces parasites.
 
-Le repo `Yacine31/db_report` contient ~35 SQL files que je n'ai pas portés.
-Procédure d'ajout :
+---
 
-1. Récupère le SQL d'origine depuis `https://github.com/Yacine31/db_report/blob/main/sql/`
-2. Nettoie les directives SQL*Plus inutiles (`COL`, `BREAK`, etc. — celles
-   qu'on déclare déjà dans `sql/header.sql`)
-3. Ajoute en première ligne : `-- TITLE: Description de la section`
-4. Garde le `;` à la fin
-5. Sauve dans `sql/database/NN_nom.sql` avec un préfixe numérique pour
-   l'ordre
+## Pour ajouter d'autres requêtes
 
-L'orchestrateur prendra automatiquement le fichier au prochain lancement.
+Le projet d'origine `Yacine31/db_report` contient d'autres requêtes non portées.
+Procédure d'ajout dans `sql/database/` :
+
+1. Récupérer le SQL depuis [le repo d'origine](https://github.com/Yacine31/db_report/blob/main/sql/).
+2. Retirer les directives SQL*Plus déjà déclarées dans `sql/header.sql`.
+3. Ajouter en première ligne : `-- TITLE: Description de la section`.
+4. Conserver le `;` final.
+5. Sauvegarder sous `sql/database/NN_nom.sql` (préfixe numérique = ordre).
+
+L'orchestrateur prend automatiquement le fichier au lancement suivant.
+
+Voir [`docs/MIGRATION.md`](docs/MIGRATION.md) pour le détail.
+
+---
+
+## Confidentialité
+
+Le rapport peut contenir des noms de serveurs, de bases, de schémas et des
+extraits de configuration. Avant toute diffusion hors du périmètre client,
+vérifiez le contenu. Le `.gitignore` exclut par défaut les rapports générés
+(`*.html`, `*.docx`, `*.pdf`, `output/`) pour éviter de committer des données
+réelles par mégarde.
+
+---
+
+## Crédits
+
+Dérivé de [`Yacine31/db_report`](https://github.com/Yacine31/db_report) (Yacine
+Oumghar). Merci de vérifier la licence du projet d'origine avant toute
+redistribution publique.
